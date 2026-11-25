@@ -1,0 +1,1009 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Personal HR Scan-to-Excel Extractor (OCR + Manual Verify)</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Inter Font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <!-- PDF.js for rendering scanned PDF pages to canvas -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <!-- Tesseract.js for browser-side OCR on scanned images/PDFs -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <!-- SheetJS (XLSX) for exporting Excel (.xlsx) and CSV (.csv) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+          },
+        },
+      },
+    };
+  </script>
+
+  <style>
+    body {
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    }
+    .is-hidden {
+      display: none !important;
+    }
+    .thin-scroll::-webkit-scrollbar {
+      width: 7px;
+      height: 7px;
+    }
+    .thin-scroll::-webkit-scrollbar-track {
+      background: #0f172a;
+    }
+    .thin-scroll::-webkit-scrollbar-thumb {
+      background: #334155;
+      border-radius: 9999px;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col">
+
+  <!-- Top Header -->
+  <header class="sticky top-0 z-30 bg-slate-950/95 backdrop-blur border-b border-slate-800">
+    <div class="max-w-7xl mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-3">
+      <div class="flex items-center gap-2.5 min-w-0">
+        <span class="w-8 h-8 rounded-lg bg-emerald-500 text-slate-950 font-extrabold text-sm flex items-center justify-center shrink-0">
+          HR
+        </span>
+        <div class="truncate">
+          <span class="font-extrabold text-white text-sm sm:text-base tracking-tight">Personal Scan-to-Excel Extractor</span>
+          <span class="hidden md:inline-block ml-2 text-[11px] font-semibold px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800">
+            Local Browser OCR • Auto + Manual Verify
+          </span>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2 shrink-0">
+        <span id="batchCountHeader" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-emerald-300">
+          0 Candidates in Excel Batch
+        </span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Non-blocking Toast Banner -->
+  <div id="toastWrap" class="is-hidden fixed bottom-4 right-4 z-50 max-w-md w-[calc(100%-2rem)]">
+    <div id="toastBox" class="rounded-xl px-4 py-3 shadow-xl border bg-slate-900 border-slate-700 text-slate-100 flex items-center justify-between gap-3 text-xs font-medium">
+      <span id="toastMsg"></span>
+      <button type="button" onclick="hideToast()" aria-label="Close" class="text-slate-400 hover:text-white font-bold cursor-pointer">✕</button>
+    </div>
+  </div>
+
+  <!-- Main Workspace -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 py-5 space-y-6">
+
+    <!-- Practical Jugaad Guidance Strip -->
+    <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 text-xs text-slate-300 leading-relaxed">
+      <strong class="text-emerald-400">Gandi Scan / Doc Scanner Jugaad:</strong>
+      Phone ya Doc Scanner se aayi halka-tedhi ya kam roshni wali PDF/photo ko pehle <strong>Rotate</strong> aur <strong>High-Contrast / Threshold</strong> se saaf karein, ya zaroorat pade toh <strong>Crop</strong> karke sirf kaam ka hissa (jaise Bank Passbook / ID / Resume part) scan karein. Phir <strong>Run OCR</strong> dabayein, boxes mein aayi value ko scan ke saath <strong>10 second verify</strong> karein, aur <strong>Add Candidate to Batch</strong> karke end mein <strong>Export Excel (.xlsx)</strong> download karein. Koi document server par save nahi hota.
+    </div>
+
+    <!-- STEP 1: Upload Scanned PDF or Image + Page Selector -->
+    <section class="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 space-y-4">
+      <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div>
+          <span class="text-[11px] font-bold uppercase tracking-wider text-emerald-400">Step 1 • Document Input</span>
+          <h1 class="text-base sm:text-lg font-extrabold text-white">Upload Scanned PDF or Image (Resume, Marksheet, Aadhaar, Passbook)</h1>
+          <p class="text-xs text-slate-400 mt-0.5">Supports .pdf, .jpg, .jpeg, .png, .webp. Multi-page PDF mein page number chun kar scan karein.</p>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2.5">
+          <label for="docUploadInput" class="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs sm:text-sm font-extrabold transition cursor-pointer">
+            + Upload PDF / Scan Image
+          </label>
+          <input type="file" id="docUploadInput" accept=".pdf,image/png,image/jpeg,image/webp" onchange="onDocumentSelected(event)" class="hidden" />
+
+          <!-- PDF Page Navigation (shown only when multi-page PDF is loaded) -->
+          <div id="pdfPageControls" class="is-hidden flex items-center gap-1.5 bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs">
+            <button type="button" onclick="changePdfPage(-1)" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-white font-bold cursor-pointer">‹</button>
+            <span id="pdfPageIndicator" class="font-semibold text-slate-200 px-1">Page 1 / 1</span>
+            <button type="button" onclick="changePdfPage(1)" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-white font-bold cursor-pointer">›</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- STEP 2: Side-by-Side Scan Cleanup + Extracted Fields Form -->
+    <section class="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+
+      <!-- Left Column (6 cols): Scan Viewer, Rotate, Contrast/B&W Cleanup & Crop -->
+      <div class="lg:col-span-6 bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400">Step 2A • Scan Cleanup &amp; Crop</span>
+            <h2 class="text-sm sm:text-base font-bold text-white">Document Preview &amp; Quality Boost</h2>
+          </div>
+          <span id="docSourceBadge" class="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-slate-800 text-slate-300">
+            No document loaded
+          </span>
+        </div>
+
+        <!-- Cleanup Controls -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+          <button type="button" onclick="rotateScan(-90)" class="px-2.5 py-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-700 text-slate-200 font-semibold cursor-pointer">
+            ↺ Rotate Left
+          </button>
+          <button type="button" onclick="rotateScan(90)" class="px-2.5 py-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-700 text-slate-200 font-semibold cursor-pointer">
+            ↻ Rotate Right
+          </button>
+          <button type="button" id="toggleCropBtn" onclick="toggleCropMode()" class="px-2.5 py-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-700 text-slate-200 font-semibold cursor-pointer">
+            ✂ Crop Box
+          </button>
+          <button type="button" onclick="resetCropAndFilter()" class="px-2.5 py-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-700 text-slate-300 font-semibold cursor-pointer">
+            Reset View
+          </button>
+        </div>
+
+        <!-- Scan Enhancement Sliders (Helps dull/faint Doc Scanner pages) -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs">
+          <div>
+            <div class="flex justify-between text-slate-300 font-semibold mb-1">
+              <span>Contrast Boost</span>
+              <span id="contrastValLabel">140%</span>
+            </div>
+            <input type="range" id="contrastSlider" min="80" max="240" value="140" oninput="applyScanAdjustments()" class="w-full accent-emerald-400 cursor-pointer" />
+          </div>
+          <div>
+            <div class="flex justify-between text-slate-300 font-semibold mb-1">
+              <span>B&amp;W Ink Threshold</span>
+              <span id="thresholdValLabel">Off</span>
+            </div>
+            <input type="range" id="thresholdSlider" min="0" max="220" value="0" oninput="applyScanAdjustments()" class="w-full accent-emerald-400 cursor-pointer" />
+            <span class="text-[10px] text-slate-400">0 = Grayscale + Contrast • 100–170 = Crisp B&amp;W</span>
+          </div>
+        </div>
+
+        <!-- Interactive Canvas Stage for Drag-Cropping -->
+        <div class="relative rounded-xl bg-slate-950 border border-slate-800 overflow-auto thin-scroll max-h-[460px] flex items-center justify-center p-2">
+          <div id="emptyScanPlaceholder" class="py-16 px-4 text-center text-xs text-slate-400">
+            Upar se scanned PDF ya photo upload karein—yahan document dikhega.
+          </div>
+          <div id="canvasWrapper" class="is-hidden relative inline-block select-none">
+            <canvas id="scanCanvas" class="max-w-full h-auto block rounded"></canvas>
+            <div
+              id="cropOverlayBox"
+              class="is-hidden absolute border-2 border-emerald-400 bg-emerald-400/15 pointer-events-none"
+            ></div>
+          </div>
+        </div>
+
+        <!-- Run OCR Button & Progress -->
+        <div class="space-y-2">
+          <div id="ocrProgressBox" class="is-hidden space-y-1">
+            <div class="flex justify-between text-xs font-semibold text-emerald-300">
+              <span id="ocrStatusLabel">Reading scanned text...</span>
+              <span id="ocrPctLabel">0%</span>
+            </div>
+            <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+              <div id="ocrProgressBar" class="h-full bg-emerald-400 transition-all duration-150 w-0"></div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            id="runOcrBtn"
+            onclick="runOcrOnCurrentScan()"
+            class="w-full py-2.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs sm:text-sm font-extrabold transition cursor-pointer"
+          >
+            🔍 Extract Fields (Run OCR on Scan / Crop)
+          </button>
+        </div>
+      </div>
+
+      <!-- Right Column (6 cols): Auto-Filled + Manual Verify Fields Form -->
+      <div class="lg:col-span-6 bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 space-y-4">
+        <div class="flex items-center justify-between gap-2">
+          <div>
+            <span class="text-[11px] font-bold uppercase tracking-wider text-emerald-400">Step 2B • Auto + Manual Verify</span>
+            <h2 class="text-sm sm:text-base font-bold text-white">Candidate Fields (Edit Any Box Before Adding)</h2>
+          </div>
+          <button
+            type="button"
+            onclick="clearCurrentCandidateForm()"
+            class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 cursor-pointer"
+          >
+            Clear Boxes
+          </button>
+        </div>
+
+        <!-- Structured HR Fields Grid -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+          <div>
+            <label for="f_candidateName" class="block font-semibold text-slate-300 mb-1">Candidate Name</label>
+            <input type="text" id="f_candidateName" placeholder="Full Name" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white" />
+          </div>
+          <div>
+            <label for="f_employeeId" class="block font-semibold text-slate-300 mb-1">Employee ID</label>
+            <input type="text" id="f_employeeId" placeholder="e.g. EMP-104" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white" />
+          </div>
+          <div>
+            <label for="f_fatherName" class="block font-semibold text-slate-300 mb-1">Father Name</label>
+            <input type="text" id="f_fatherName" placeholder="Father's Name" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white" />
+          </div>
+          <div>
+            <label for="f_motherName" class="block font-semibold text-slate-300 mb-1">Mother Name</label>
+            <input type="text" id="f_motherName" placeholder="Mother's Name" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white" />
+          </div>
+          <div>
+            <label for="f_aadhaar" class="block font-semibold text-slate-300 mb-1">Aadhaar Number (12 Digits)</label>
+            <input type="text" id="f_aadhaar" placeholder="XXXX XXXX XXXX" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white" />
+          </div>
+          <div>
+            <label for="f_mobile" class="block font-semibold text-slate-300 mb-1">Mobile Number</label>
+            <input type="text" id="f_mobile" placeholder="10-digit mobile" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white" />
+          </div>
+          <div>
+            <label for="f_accountNo" class="block font-semibold text-slate-300 mb-1">Bank Account Number</label>
+            <input type="text" id="f_accountNo" placeholder="Account No." class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white" />
+          </div>
+          <div>
+            <label for="f_ifsc" class="block font-semibold text-slate-300 mb-1">IFSC Code</label>
+            <input type="text" id="f_ifsc" placeholder="e.g. SBIN0001234" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white uppercase" />
+          </div>
+          <div>
+            <label for="f_dobOrMarks" class="block font-semibold text-slate-300 mb-1">DOB / Roll / Marks Note</label>
+            <input type="text" id="f_dobOrMarks" placeholder="Optional detail" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white" />
+          </div>
+          <div>
+            <label for="f_docTypeNote" class="block font-semibold text-slate-300 mb-1">Document Source / Remark</label>
+            <input type="text" id="f_docTypeNote" placeholder="e.g. Passbook + Aadhaar" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white" />
+          </div>
+          <div class="sm:col-span-2">
+            <label for="f_address" class="block font-semibold text-slate-300 mb-1">Address</label>
+            <textarea id="f_address" rows="2" placeholder="Full address from ID / resume" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white"></textarea>
+          </div>
+        </div>
+
+        <!-- Action Buttons: Add / Merge into Batch -->
+        <div class="flex flex-wrap items-center gap-2.5 pt-1">
+          <button
+            type="button"
+            onclick="addCandidateToBatch(false)"
+            class="flex-1 min-w-[170px] py-2.5 px-4 rounded-xl bg-white hover:bg-slate-200 text-slate-950 text-xs sm:text-sm font-extrabold transition cursor-pointer"
+          >
+            + Add New Row to Excel Batch
+          </button>
+          <button
+            type="button"
+            onclick="addCandidateToBatch(true)"
+            title="Merge non-empty fields into the last added candidate row (useful when reading Aadhaar first, then Passbook for the same person)"
+            class="py-2.5 px-3.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-emerald-300 text-xs font-bold transition cursor-pointer"
+          >
+            Merge Into Last Row
+          </button>
+        </div>
+
+        <!-- Raw OCR Text Reference (Collapsed/Compact for manual copy if needed) -->
+        <details class="rounded-xl bg-slate-950 border border-slate-800 p-3 text-xs">
+          <summary class="font-semibold text-slate-300 cursor-pointer select-none">
+            Raw OCR Readout (Click to inspect / copy if a field was missed)
+          </summary>
+          <textarea
+            id="rawOcrOutput"
+            rows="5"
+            placeholder="OCR text will appear here after running extraction..."
+            class="mt-2 w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-slate-200 text-[11px] font-mono"
+          ></textarea>
+        </details>
+      </div>
+    </section>
+
+    <!-- STEP 3: Batch Table & Export to Excel (.xlsx) / CSV (.csv) -->
+    <section class="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 space-y-4">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <span class="text-[11px] font-bold uppercase tracking-wider text-emerald-400">Step 3 • Export Sheet</span>
+          <h2 class="text-base sm:text-lg font-bold text-white">Collected Candidates Batch (<span id="batchRowCountSpan">0</span> Rows)</h2>
+          <p class="text-xs text-slate-400">Ek hi candidate ke alag-alag documents (Resume, Aadhaar, Passbook) se data bhar kar ek clean Excel sheet mein nikal sakte hain.</p>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onclick="exportBatchToExcel()"
+            class="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs sm:text-sm font-extrabold transition cursor-pointer"
+          >
+            ⬇ Export Excel (.xlsx)
+          </button>
+          <button
+            type="button"
+            onclick="exportBatchToCsv()"
+            class="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs sm:text-sm font-bold border border-slate-700 transition cursor-pointer"
+          >
+            ⬇ Export CSV
+          </button>
+          <button
+            type="button"
+            onclick="clearAllBatchRows()"
+            class="px-3 py-2.5 rounded-xl bg-slate-950 hover:bg-rose-950/60 text-rose-300 text-xs font-semibold border border-slate-800 transition cursor-pointer"
+          >
+            Clear Batch
+          </button>
+        </div>
+      </div>
+
+      <div class="overflow-x-auto thin-scroll rounded-xl border border-slate-800 bg-slate-950">
+        <table class="min-w-full text-left text-xs border-collapse">
+          <thead class="bg-slate-900 text-slate-300 border-b border-slate-800">
+            <tr>
+              <th class="px-3 py-2.5 font-bold">#</th>
+              <th class="px-3 py-2.5 font-bold whitespace-nowrap">Candidate Name</th>
+              <th class="px-3 py-2.5 font-bold whitespace-nowrap">Emp ID</th>
+              <th class="px-3 py-2.5 font-bold whitespace-nowrap">Father Name</th>
+              <th class="px-3 py-2.5 font-bold whitespace-nowrap">Mother Name</th>
+              <th class="px-3 py-2.5 font-bold whitespace-nowrap">Aadhaar</th>
+              <th class="px-3 py-2.5 font-bold whitespace-nowrap">Mobile</th>
+              <th class="px-3 py-2.5 font-bold whitespace-nowrap">Account No.</th>
+              <th class="px-3 py-2.5 font-bold whitespace-nowrap">IFSC</th>
+              <th class="px-3 py-2.5 font-bold whitespace-nowrap">Address</th>
+              <th class="px-3 py-2.5 font-bold whitespace-nowrap">DOB/Marks</th>
+              <th class="px-3 py-2.5 font-bold whitespace-nowrap">Remark</th>
+              <th class="px-3 py-2.5 font-bold text-right">Action</th>
+            </tr>
+          </thead>
+          <tbody id="batchTableBody" class="divide-y divide-slate-800/80 text-slate-200">
+            <tr>
+              <td colspan="13" class="px-4 py-6 text-center text-slate-500">
+                Abhi koi candidate row add nahi hui hai. Upar OCR ya manual entry ke baad "Add New Row to Excel Batch" dabayein.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    // Configure PDF.js worker
+    if (window.pdfjsLib && window.pdfjsLib.GlobalWorkerOptions) {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+
+    const FIELD_IDS = [
+      'candidateName',
+      'employeeId',
+      'fatherName',
+      'motherName',
+      'aadhaar',
+      'mobile',
+      'accountNo',
+      'ifsc',
+      'dobOrMarks',
+      'docTypeNote',
+      'address'
+    ];
+
+    const state = {
+      sourceType: null, // 'image' | 'pdf'
+      fileName: '',
+      baseImageCanvas: document.createElement('canvas'),
+      pdfDoc: null,
+      pdfPageNum: 1,
+      pdfTotalPages: 1,
+      rotationDeg: 0,
+      cropMode: false,
+      isDraggingCrop: false,
+      dragStart: { x: 0, y: 0 },
+      cropRect: null, // { x, y, w, h } in displayed canvas coordinates
+      batchRows: []
+    };
+
+    let toastTimer = null;
+    function showToast(msg, isError = false) {
+      const wrap = document.getElementById('toastWrap');
+      const box = document.getElementById('toastBox');
+      const txt = document.getElementById('toastMsg');
+      txt.textContent = msg;
+      box.className = isError
+        ? 'rounded-xl px-4 py-3 shadow-xl border bg-slate-950 border-rose-500 text-rose-200 flex items-center justify-between gap-3 text-xs font-semibold'
+        : 'rounded-xl px-4 py-3 shadow-xl border bg-slate-900 border-slate-700 text-slate-100 flex items-center justify-between gap-3 text-xs font-medium';
+      wrap.classList.remove('is-hidden');
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(hideToast, 4000);
+    }
+
+    function hideToast() {
+      document.getElementById('toastWrap').classList.add('is-hidden');
+    }
+
+    function esc(s) {
+      return String(s ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    async function onDocumentSelected(evt) {
+      const file = evt.target.files && evt.target.files[0];
+      if (!file) return;
+
+      state.fileName = file.name;
+      state.rotationDeg = 0;
+      state.cropRect = null;
+      document.getElementById('cropOverlayBox').classList.add('is-hidden');
+
+      if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+        if (!window.pdfjsLib) {
+          showToast('PDF.js failed to load. Check internet or refresh.', true);
+          return;
+        }
+        try {
+          const buf = await file.arrayBuffer();
+          const loadingTask = window.pdfjsLib.getDocument({ data: buf });
+          state.pdfDoc = await loadingTask.promise;
+          state.pdfTotalPages = state.pdfDoc.numPages;
+          state.pdfPageNum = 1;
+          state.sourceType = 'pdf';
+
+          document.getElementById('pdfPageControls').classList.remove('is-hidden');
+          updatePdfPageLabel();
+          await renderPdfPageToBaseCanvas(1);
+          document.getElementById('docSourceBadge').textContent = `${file.name} (PDF)`;
+          showToast(`Loaded PDF (${state.pdfTotalPages} pages). Page 1 ready.`);
+        } catch (err) {
+          console.error(err);
+          showToast('Could not open PDF file.', true);
+        }
+      } else if (file.type.startsWith('image/')) {
+        state.sourceType = 'image';
+        state.pdfDoc = null;
+        document.getElementById('pdfPageControls').classList.add('is-hidden');
+
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+          const maxDim = 2000;
+          let w = img.naturalWidth;
+          let h = img.naturalHeight;
+          if (w > maxDim || h > maxDim) {
+            const scale = Math.min(maxDim / w, maxDim / h);
+            w = Math.round(w * scale);
+            h = Math.round(h * scale);
+          }
+          state.baseImageCanvas.width = w;
+          state.baseImageCanvas.height = h;
+          const bctx = state.baseImageCanvas.getContext('2d');
+          bctx.clearRect(0, 0, w, h);
+          bctx.drawImage(img, 0, 0, w, h);
+          URL.revokeObjectURL(url);
+
+          document.getElementById('docSourceBadge').textContent = `${file.name} (Image)`;
+          applyScanAdjustments();
+          showToast('Scan image loaded. Adjust contrast/rotation or click Extract Fields.');
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(url);
+          showToast('Could not load image.', true);
+        };
+        img.src = url;
+      } else {
+        showToast('Please select a PDF or image file.', true);
+      }
+    }
+
+    function updatePdfPageLabel() {
+      document.getElementById('pdfPageIndicator').textContent = `Page ${state.pdfPageNum} / ${state.pdfTotalPages}`;
+    }
+
+    async function changePdfPage(delta) {
+      if (!state.pdfDoc) return;
+      const next = state.pdfPageNum + delta;
+      if (next < 1 || next > state.pdfTotalPages) return;
+      state.pdfPageNum = next;
+      state.rotationDeg = 0;
+      state.cropRect = null;
+      document.getElementById('cropOverlayBox').classList.add('is-hidden');
+      updatePdfPageLabel();
+      await renderPdfPageToBaseCanvas(next);
+    }
+
+    async function renderPdfPageToBaseCanvas(pageNumber) {
+      const page = await state.pdfDoc.getPage(pageNumber);
+      // 1.85x scale balances legibility on scanned pages with speed
+      const viewport = page.getViewport({ scale: 1.85 });
+      state.baseImageCanvas.width = Math.round(viewport.width);
+      state.baseImageCanvas.height = Math.round(viewport.height);
+      const bctx = state.baseImageCanvas.getContext('2d');
+      bctx.fillStyle = '#ffffff';
+      bctx.fillRect(0, 0, state.baseImageCanvas.width, state.baseImageCanvas.height);
+      await page.render({ canvasContext: bctx, viewport }).promise;
+      applyScanAdjustments();
+    }
+
+    function rotateScan(deg) {
+      if (!state.baseImageCanvas.width) {
+        showToast('Upload a document first.', true);
+        return;
+      }
+      state.rotationDeg = (state.rotationDeg + deg + 360) % 360;
+      state.cropRect = null;
+      document.getElementById('cropOverlayBox').classList.add('is-hidden');
+      applyScanAdjustments();
+    }
+
+    function resetCropAndFilter() {
+      state.rotationDeg = 0;
+      state.cropRect = null;
+      state.cropMode = false;
+      document.getElementById('toggleCropBtn').classList.remove('ring-2', 'ring-emerald-400');
+      document.getElementById('cropOverlayBox').classList.add('is-hidden');
+      document.getElementById('contrastSlider').value = 140;
+      document.getElementById('thresholdSlider').value = 0;
+      applyScanAdjustments();
+    }
+
+    /**
+     * Render rotated + contrast/grayscale/threshold adjusted scan onto #scanCanvas.
+     */
+    function applyScanAdjustments() {
+      const src = state.baseImageCanvas;
+      if (!src.width || !src.height) return;
+
+      const contrastPct = parseInt(document.getElementById('contrastSlider').value, 10) || 100;
+      const thresholdVal = parseInt(document.getElementById('thresholdSlider').value, 10) || 0;
+
+      document.getElementById('contrastValLabel').textContent = `${contrastPct}%`;
+      document.getElementById('thresholdValLabel').textContent = thresholdVal > 0 ? `${thresholdVal}` : 'Off';
+
+      const tempRot = document.createElement('canvas');
+      const swap = state.rotationDeg === 90 || state.rotationDeg === 270;
+      tempRot.width = swap ? src.height : src.width;
+      tempRot.height = swap ? src.width : src.height;
+
+      const rctx = tempRot.getContext('2d');
+      rctx.save();
+      rctx.translate(tempRot.width / 2, tempRot.height / 2);
+      rctx.rotate((state.rotationDeg * Math.PI) / 180);
+      rctx.filter = `grayscale(100%) contrast(${contrastPct}%)`;
+      rctx.drawImage(src, -src.width / 2, -src.height / 2);
+      rctx.restore();
+
+      if (thresholdVal > 0) {
+        const imgData = rctx.getImageData(0, 0, tempRot.width, tempRot.height);
+        const px = imgData.data;
+        for (let i = 0; i < px.length; i += 4) {
+          const lum = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+          const v = lum >= thresholdVal ? 255 : 0;
+          px[i] = v;
+          px[i + 1] = v;
+          px[i + 2] = v;
+        }
+        rctx.putImageData(imgData, 0, 0);
+      }
+
+      const outCanvas = document.getElementById('scanCanvas');
+      outCanvas.width = tempRot.width;
+      outCanvas.height = tempRot.height;
+      outCanvas.getContext('2d').drawImage(tempRot, 0, 0);
+
+      document.getElementById('emptyScanPlaceholder').classList.add('is-hidden');
+      document.getElementById('canvasWrapper').classList.remove('is-hidden');
+    }
+
+    /* ===================================================================== */
+    /* DRAG-TO-CROP ON SCAN CANVAS                                           */
+    /* ===================================================================== */
+    function toggleCropMode() {
+      if (!state.baseImageCanvas.width) {
+        showToast('Upload a document first.', true);
+        return;
+      }
+      state.cropMode = !state.cropMode;
+      const btn = document.getElementById('toggleCropBtn');
+      if (state.cropMode) {
+        btn.classList.add('ring-2', 'ring-emerald-400');
+        showToast('Drag over the scan area you want to extract.');
+      } else {
+        btn.classList.remove('ring-2', 'ring-emerald-400');
+      }
+    }
+
+    (function setupCropEvents() {
+      const canvas = document.getElementById('scanCanvas');
+      const box = document.getElementById('cropOverlayBox');
+
+      canvas.addEventListener('mousedown', (e) => {
+        if (!state.cropMode) return;
+        const rect = canvas.getBoundingClientRect();
+        state.isDraggingCrop = true;
+        state.dragStart = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+        state.cropRect = { x: state.dragStart.x, y: state.dragStart.y, w: 0, h: 0 };
+        box.classList.remove('is-hidden');
+        box.style.left = `${state.dragStart.x}px`;
+        box.style.top = `${state.dragStart.y}px`;
+        box.style.width = '0px';
+        box.style.height = '0px';
+      });
+
+      window.addEventListener('mousemove', (e) => {
+        if (!state.isDraggingCrop) return;
+        const rect = canvas.getBoundingClientRect();
+        const curX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+        const curY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+
+        const x = Math.min(state.dragStart.x, curX);
+        const y = Math.min(state.dragStart.y, curY);
+        const w = Math.abs(curX - state.dragStart.x);
+        const h = Math.abs(curY - state.dragStart.y);
+
+        state.cropRect = { x, y, w, h };
+        box.style.left = `${x}px`;
+        box.style.top = `${y}px`;
+        box.style.width = `${w}px`;
+        box.style.height = `${h}px`;
+      });
+
+      window.addEventListener('mouseup', () => {
+        if (!state.isDraggingCrop) return;
+        state.isDraggingCrop = false;
+        if (!state.cropRect || state.cropRect.w < 12 || state.cropRect.h < 12) {
+          state.cropRect = null;
+          box.classList.add('is-hidden');
+        }
+      });
+    })();
+
+    /* ===================================================================== */
+    /* OCR EXTRACTION + SMART FIELD PARSING FOR HR DOCUMENTS                 */
+    /* ===================================================================== */
+    async function runOcrOnCurrentScan() {
+      const scanCanvas = document.getElementById('scanCanvas');
+      if (!scanCanvas.width || !scanCanvas.height) {
+        showToast('Upload a PDF or scan image first.', true);
+        return;
+      }
+      if (!window.Tesseract) {
+        showToast('Tesseract OCR library failed to load.', true);
+        return;
+      }
+
+      // Prepare target canvas (either cropped region or full scan)
+      let targetCanvas = scanCanvas;
+      if (state.cropRect && state.cropRect.w > 12 && state.cropRect.h > 12) {
+        const rect = scanCanvas.getBoundingClientRect();
+        const scaleX = scanCanvas.width / rect.width;
+        const scaleY = scanCanvas.height / rect.height;
+
+        const sx = Math.max(0, Math.round(state.cropRect.x * scaleX));
+        const sy = Math.max(0, Math.round(state.cropRect.y * scaleY));
+        const sw = Math.min(scanCanvas.width - sx, Math.round(state.cropRect.w * scaleX));
+        const sh = Math.min(scanCanvas.height - sy, Math.round(state.cropRect.h * scaleY));
+
+        if (sw > 10 && sh > 10) {
+          const cropC = document.createElement('canvas');
+          cropC.width = sw;
+          cropC.height = sh;
+          cropC.getContext('2d').drawImage(scanCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
+          targetCanvas = cropC;
+        }
+      }
+
+      const btn = document.getElementById('runOcrBtn');
+      const progBox = document.getElementById('ocrProgressBox');
+      const progBar = document.getElementById('ocrProgressBar');
+      const progPct = document.getElementById('ocrPctLabel');
+      const progStatus = document.getElementById('ocrStatusLabel');
+
+      btn.disabled = true;
+      btn.classList.add('opacity-60', 'cursor-not-allowed');
+      progBox.classList.remove('is-hidden');
+
+      try {
+        const worker = await Tesseract.createWorker('eng', 1, {
+          logger: (m) => {
+            if (m.status === 'recognizing text' && typeof m.progress === 'number') {
+              const pct = Math.round(m.progress * 100);
+              progBar.style.width = `${pct}%`;
+              progPct.textContent = `${pct}%`;
+              progStatus.textContent = 'Recognizing text from scan...';
+            } else if (m.status) {
+              progStatus.textContent = m.status;
+            }
+          }
+        });
+
+        const { data } = await worker.recognize(targetCanvas);
+        await worker.terminate();
+
+        const rawText = (data && data.text) ? data.text.trim() : '';
+        document.getElementById('rawOcrOutput').value = rawText;
+
+        if (!rawText) {
+          showToast('No readable text detected. Try higher contrast or B&W threshold.', true);
+        } else {
+          autoFillFieldsFromOcr(rawText);
+          showToast('OCR complete! Please verify fields in the boxes before adding to Excel batch.');
+        }
+      } catch (err) {
+        console.error(err);
+        showToast('OCR failed on this scan. Try rotating or cropping.', true);
+      } finally {
+        btn.disabled = false;
+        btn.classList.remove('opacity-60', 'cursor-not-allowed');
+        setTimeout(() => {
+          progBox.classList.add('is-hidden');
+          progBar.style.width = '0%';
+          progPct.textContent = '0%';
+        }, 1500);
+      }
+    }
+
+    /**
+     * Heuristic field extractor for common HR documents (Resume, ID, Marksheet, Passbook).
+     * Fills blank boxes only so manual edits aren't overwritten unexpectedly.
+     */
+    function autoFillFieldsFromOcr(text) {
+      const setIfEmpty = (id, val) => {
+        if (!val) return;
+        const el = document.getElementById(`f_${id}`);
+        if (el && !el.value.trim()) {
+          el.value = val.trim();
+        }
+      };
+
+      const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+
+      // 1. IFSC Code (4 letters + 0 + 6 alphanumeric)
+      const ifscMatch = text.match(/\b[A-Z]{4}0[A-Z0-9]{6}\b/i);
+      if (ifscMatch) setIfEmpty('ifsc', ifscMatch[0].toUpperCase());
+
+      // 2. Mobile Number (10 digits starting 6-9)
+      const mobMatch = text.match(/(?:\+91[\s-]?|0)?([6-9]\d[\s-]?\d{4}[\s-]?\d{4})\b/);
+      if (mobMatch) {
+        const digits = mobMatch[1].replace(/\D/g, '');
+        if (digits.length === 10) setIfEmpty('mobile', digits);
+      }
+
+      // 3. Aadhaar Number (12 digits, often grouped 4-4-4)
+      const aadhaarMatch = text.match(/\b(\d{4}[\s-]?\d{4}[\s-]?\d{4})\b/);
+      if (aadhaarMatch) {
+        const digits = aadhaarMatch[1].replace(/\D/g, '');
+        if (digits.length === 12) {
+          setIfEmpty('aadhaar', `${digits.slice(0, 4)} ${digits.slice(4, 8)} ${digits.slice(8, 12)}`);
+        }
+      }
+
+      // 4. Bank Account Number (9 to 18 digits, excluding Aadhaar/Mobile)
+      const knownDigits = new Set();
+      const mobEl = document.getElementById('f_mobile')?.value.replace(/\D/g, '');
+      const aadEl = document.getElementById('f_aadhaar')?.value.replace(/\D/g, '');
+      if (mobEl) knownDigits.add(mobEl);
+      if (aadEl) knownDigits.add(aadEl);
+
+      const acctCandidates = text.match(/\b\d{9,18}\b/g) || [];
+      for (const cand of acctCandidates) {
+        if (!knownDigits.has(cand)) {
+          setIfEmpty('accountNo', cand);
+          break;
+        }
+      }
+
+      // 5. Labeled lines helper
+      for (const line of lines) {
+        const lower = line.toLowerCase();
+        if (/father|s\/o|d\/o|c\/o|pita/.test(lower)) {
+          const cleaned = line.replace(/^(father('s)?\s*name|s\/o|d\/o|c\/o|pita)\s*[:\-–]?\s*/i, '');
+          if (cleaned && cleaned.length < 70) setIfEmpty('fatherName', cleaned);
+        } else if (/mother|mata/.test(lower)) {
+          const cleaned = line.replace(/^(mother('s)?\s*name|mata)\s*[:\-–]?\s*/i, '');
+          if (cleaned && cleaned.length < 70) setIfEmpty('motherName', cleaned);
+        } else if (/(emp\s*id|employee\s*id|emp\s*code|id\s*no)/.test(lower)) {
+          const cleaned = line.replace(/^(emp\s*id|employee\s*id|emp\s*code|id\s*no)\s*[:\-–]?\s*/i, '');
+          if (cleaned && cleaned.length < 30) setIfEmpty('employeeId', cleaned);
+        } else if (/(candidate\s*name|name\s*[:\-]|applicant)/.test(lower) && !/father|mother/.test(lower)) {
+          const cleaned = line.replace(/^(candidate\s*name|full\s*name|name|applicant\s*name)\s*[:\-–]?\s*/i, '');
+          if (cleaned && cleaned.length < 70) setIfEmpty('candidateName', cleaned);
+        } else if (/(address|addr|vill|po|dist|pin)/.test(lower) && line.length > 12) {
+          const cleaned = line.replace(/^(address|addr)\s*[:\-–]?\s*/i, '');
+          if (cleaned) setIfEmpty('address', cleaned);
+        } else if (/(dob|date\s*of\s*birth|marks|cgpa|percentage)/.test(lower)) {
+          setIfEmpty('dobOrMarks', line.slice(0, 60));
+        }
+      }
+
+      // Fallback Candidate Name: first short non-numeric line if name is still blank
+      const nameEl = document.getElementById('f_candidateName');
+      if (nameEl && !nameEl.value.trim()) {
+        const guess = lines.find(
+          (l) =>
+            l.length >= 3 &&
+            l.length <= 45 &&
+            !/\d{4}/.test(l) &&
+            !/(aadhaar|government|india|bank|ifsc|account|resume|curriculum|marksheet|mobile|address)/i.test(l)
+        );
+        if (guess) nameEl.value = guess;
+      }
+    }
+
+    /* ===================================================================== */
+    /* BATCH COLLECTION & EXCEL / CSV EXPORT                                 */
+    /* ===================================================================== */
+    function readFormValues() {
+      const obj = {};
+      FIELD_IDS.forEach((id) => {
+        const el = document.getElementById(`f_${id}`);
+        obj[id] = el ? el.value.trim() : '';
+      });
+      return obj;
+    }
+
+    function clearCurrentCandidateForm() {
+      FIELD_IDS.forEach((id) => {
+        const el = document.getElementById(`f_${id}`);
+        if (el) el.value = '';
+      });
+    }
+
+    function addCandidateToBatch(mergeIntoLast = false) {
+      const current = readFormValues();
+      const hasAnyValue = Object.values(current).some((v) => v !== '');
+      if (!hasAnyValue) {
+        showToast('Enter or extract at least one field first.', true);
+        return;
+      }
+
+      if (mergeIntoLast && state.batchRows.length > 0) {
+        const lastIdx = state.batchRows.length - 1;
+        const target = state.batchRows[lastIdx];
+        FIELD_IDS.forEach((key) => {
+          if (current[key]) {
+            target[key] = target[key] ? `${target[key]} | ${current[key]}` : current[key];
+          }
+        });
+        showToast(`Merged into Row #${lastIdx + 1}.`);
+      } else {
+        state.batchRows.push(current);
+        showToast(`Added Candidate #${state.batchRows.length} to Excel batch.`);
+      }
+
+      clearCurrentCandidateForm();
+      renderBatchTable();
+    }
+
+    function removeBatchRow(idx) {
+      state.batchRows.splice(idx, 1);
+      renderBatchTable();
+      showToast('Row removed from batch.');
+    }
+
+    function clearAllBatchRows() {
+      state.batchRows = [];
+      renderBatchTable();
+      showToast('Batch cleared.');
+    }
+
+    function renderBatchTable() {
+      const count = state.batchRows.length;
+      document.getElementById('batchCountHeader').textContent = `${count} Candidate${count === 1 ? '' : 's'} in Excel Batch`;
+      document.getElementById('batchRowCountSpan').textContent = String(count);
+
+      const tbody = document.getElementById('batchTableBody');
+      if (!count) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="13" class="px-4 py-6 text-center text-slate-500">
+              Abhi koi candidate row add nahi hui hai. Upar OCR ya manual entry ke baad "Add New Row to Excel Batch" dabayein.
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      tbody.innerHTML = state.batchRows
+        .map(
+          (r, i) => `
+          <tr class="hover:bg-slate-900/70">
+            <td class="px-3 py-2 text-slate-400 font-semibold">${i + 1}</td>
+            <td class="px-3 py-2 font-semibold text-white whitespace-nowrap">${esc(r.candidateName)}</td>
+            <td class="px-3 py-2 whitespace-nowrap">${esc(r.employeeId)}</td>
+            <td class="px-3 py-2 whitespace-nowrap">${esc(r.fatherName)}</td>
+            <td class="px-3 py-2 whitespace-nowrap">${esc(r.motherName)}</td>
+            <td class="px-3 py-2 whitespace-nowrap">${esc(r.aadhaar)}</td>
+            <td class="px-3 py-2 whitespace-nowrap">${esc(r.mobile)}</td>
+            <td class="px-3 py-2 whitespace-nowrap">${esc(r.accountNo)}</td>
+            <td class="px-3 py-2 whitespace-nowrap">${esc(r.ifsc)}</td>
+            <td class="px-3 py-2 max-w-[200px] truncate" title="${esc(r.address)}">${esc(r.address)}</td>
+            <td class="px-3 py-2 whitespace-nowrap">${esc(r.dobOrMarks)}</td>
+            <td class="px-3 py-2 whitespace-nowrap">${esc(r.docTypeNote)}</td>
+            <td class="px-3 py-2 text-right">
+              <button type="button" onclick="removeBatchRow(${i})" class="px-2 py-1 rounded bg-rose-950/70 hover:bg-rose-900 text-rose-200 text-[11px] font-semibold cursor-pointer">
+                Delete
+              </button>
+            </td>
+          </tr>
+        `
+        )
+        .join('');
+    }
+
+    function buildExportRows() {
+      return state.batchRows.map((r, i) => ({
+        Sr_No: i + 1,
+        Candidate_Name: r.candidateName,
+        Employee_ID: r.employeeId,
+        Father_Name: r.fatherName,
+        Mother_Name: r.motherName,
+        Aadhaar_Number: r.aadhaar,
+        Mobile_Number: r.mobile,
+        Account_Number: r.accountNo,
+        IFSC_Code: r.ifsc,
+        Address: r.address,
+        DOB_Or_Marks: r.dobOrMarks,
+        Document_Remark: r.docTypeNote
+      }));
+    }
+
+    function exportBatchToExcel() {
+      if (!state.batchRows.length) {
+        showToast('Add at least one candidate row before exporting Excel.', true);
+        return;
+      }
+      if (typeof XLSX === 'undefined') {
+        showToast('SheetJS library not available.', true);
+        return;
+      }
+      try {
+        const ws = XLSX.utils.json_to_sheet(buildExportRows());
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Candidates');
+        XLSX.writeFile(wb, 'HR_Extracted_Candidates.xlsx');
+        showToast('Excel (.xlsx) file downloaded.');
+      } catch (err) {
+        console.error(err);
+        showToast('Failed to export Excel file.', true);
+      }
+    }
+
+    function exportBatchToCsv() {
+      if (!state.batchRows.length) {
+        showToast('Add at least one candidate row before exporting CSV.', true);
+        return;
+      }
+      try {
+        const rows = buildExportRows();
+        const headers = Object.keys(rows[0]);
+        const csvLines = [
+          headers.join(','),
+          ...rows.map((row) =>
+            headers
+              .map((h) => {
+                const v = String(row[h] ?? '');
+                return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+              })
+              .join(',')
+          )
+        ];
+        const blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'HR_Extracted_Candidates.csv';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast('CSV file downloaded.');
+      } catch (err) {
+        console.error(err);
+        showToast('Failed to export CSV file.', true);
+      }
+    }
+  </script>
+</body>
+</html>
